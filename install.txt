@@ -1,0 +1,13 @@
+python3 -m venv venv
+source venv/bin/activate
+
+deactivate
+
+sudo apt-get install python3-flask python3-jinja2 python3-werkzeug python3-requests
+
+sudo pip3 install buildozer cython --break-system-packages
+
+
+pyinstaller run.py --collect-all flask --collect-all jinja2 --collect-all werkzeug --collect-all requests --collect-all PySide6 --collect-all shiboken6 --noconfirm
+
+pyinstaller -F -w run.py

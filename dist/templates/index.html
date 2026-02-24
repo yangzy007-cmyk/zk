@@ -1,0 +1,1031 @@
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>中控面板</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+            background-color: #000;
+        }
+        
+        #container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        #background {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-size: 100% 100%;
+            background-position: top left;
+            background-repeat: no-repeat;
+            z-index: 0;
+        }
+        
+        /* 确保按钮也能正确缩放 */
+        .button {
+            position: absolute;
+            cursor: pointer;
+            z-index: 10;
+            transform-origin: top left;
+        }
+        
+        .button img {
+            width: 100%;
+            height: 100%;
+        }
+        
+        .status-indicator {
+            position: absolute;
+            z-index: 20;
+            transform-origin: top left;
+        }
+        
+        .status-indicator img {
+            width: 100%;
+            height: 100%;
+        }
+        
+        .wait-image {
+            position: absolute;
+            z-index: 1000;
+            transform-origin: top left;
+        }
+        
+        .wait-image img {
+            width: 100%;
+            height: 100%;
+        }
+        
+
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="background"></div>
+        <div id="buttons-container"></div>
+        <div id="wait-image" class="wait-image" style="display: none;">
+            <img id="wait-image-img" src="" alt="等待中...">
+        </div>
+    </div>
+    
+    <!-- 注册窗口 -->
+    <div id="license-dialog" style="display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 30px; border-radius: 10px; box-shadow: 0 0 20px rgba(0,0,0,0.5); z-index: 2000;">
+        <h2 style="text-align: center; margin-bottom: 20px; color: #333;">软件注册</h2>
+        <div style="margin-bottom: 20px;">
+            <label style="display: block; margin-bottom: 5px; font-weight: bold;">机器ID:</label>
+            <input type="text" id="machine-id" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 16px;" readonly>
+        </div>
+        <div style="margin-bottom: 20px;">
+            <label style="display: block; margin-bottom: 5px; font-weight: bold;">注册码:</label>
+            <input type="text" id="license-key" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 16px;" placeholder="请输入注册码">
+        </div>
+        <div style="text-align: center; margin-bottom: 20px;">
+            <button id="validate-license" style="background: #4CAF50; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px;">注册</button>
+            <button id="close-license" style="background: #f44336; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; margin-left: 10px;">关闭</button>
+        </div>
+        <div id="license-message" style="text-align: center; padding: 10px; border-radius: 5px; font-weight: bold;"></div>
+    </div>
+    
+    <!-- 遮罩层 -->
+    <div id="overlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1999;"></div>
+    
+    <script>
+        let currentPage = 1;
+        let config = null;
+        
+        // 全局变量
+        let originalWidth = 1920; // 默认原始宽度
+        let originalHeight = 1080; // 默认原始高度
+        let waitImageConfig = {
+            src: '',
+            x: 960,
+            y: 540,
+            width: 200,
+            height: 200
+        };
+        
+        // 初始化
+        async function init() {
+            try {
+                console.log('开始初始化...');
+                // 获取原始配置的分辨率和等待图片设置
+                try {
+                    const configResponse = await fetch('/api/config');
+                    if (configResponse.ok) {
+                        const configData = await configResponse.json();
+                        originalWidth = configData.resolution.width;
+                        originalHeight = configData.resolution.height;
+                        waitImageConfig = {
+                            src: configData.wait_image_src || '',
+                            x: configData.wait_image_x || 960,
+                            y: configData.wait_image_y || 540,
+                            width: configData.wait_image_width || 200,
+                            height: configData.wait_image_height || 200
+                        };
+                        console.log('原始分辨率:', originalWidth, 'x', originalHeight);
+                        console.log('等待图片设置:', waitImageConfig);
+                        // 更新等待图片
+                        updateWaitImage();
+                    } else {
+                        // 默认值
+                        originalWidth = 1920;
+                        originalHeight = 1080;
+                        console.log('原始分辨率:', originalWidth, 'x', originalHeight);
+                    }
+                } catch (error) {
+                    console.error('获取配置失败:', error);
+                    // 使用默认值
+                    originalWidth = 1920;
+                    originalHeight = 1080;
+                }
+                
+                // 检查许可证状态
+                checkLicenseStatus();
+                
+                // 直接加载页面，不通过根路径获取配置
+                loadPage(currentPage);
+            } catch (error) {
+                console.error('初始化失败:', error);
+            }
+        }
+        
+        // 更新等待图片
+        function updateWaitImage() {
+            const waitImage = document.getElementById('wait-image');
+            const waitImageImg = document.getElementById('wait-image-img');
+            
+            if (waitImageConfig.src) {
+                // 确保路径不包含重复的data/前缀
+                const srcPath = waitImageConfig.src.replace(/^data/, '');
+                waitImageImg.src = `/data/${srcPath}`;
+                
+                // 设置位置和大小
+                const windowWidth = window.innerWidth;
+                const windowHeight = window.innerHeight;
+                const scaleX = windowWidth / originalWidth;
+                const scaleY = windowHeight / originalHeight;
+                
+                const scaledX = waitImageConfig.x * scaleX;
+                const scaledY = waitImageConfig.y * scaleY;
+                const scaledW = waitImageConfig.width * scaleX;
+                const scaledH = waitImageConfig.height * scaleY;
+                
+                waitImage.style.left = `${scaledX}px`;
+                waitImage.style.top = `${scaledY}px`;
+                waitImage.style.width = `${scaledW}px`;
+                waitImage.style.height = `${scaledH}px`;
+            }
+        }
+        
+        // 显示等待图片
+        function showWaitImage() {
+            if (waitImageConfig.src) {
+                const waitImage = document.getElementById('wait-image');
+                waitImage.style.display = 'block';
+                console.log('显示等待图片');
+            }
+        }
+        
+        // 隐藏等待图片
+        function hideWaitImage() {
+            const waitImage = document.getElementById('wait-image');
+            waitImage.style.display = 'none';
+            console.log('隐藏等待图片');
+        }
+        
+        // 加载页面
+        // 存储当前页面的按钮配置
+        let currentButtonsConfig = [];
+        
+        async function loadPage(pageId) {
+            try {
+                console.log('加载页面:', pageId);
+                const response = await fetch(`/api/page/${pageId}`);
+                console.log('页面请求状态:', response.status);
+                const data = await response.json();
+                console.log('页面数据:', data);
+                
+                if (data.success) {
+                    const page = data.page;
+                    currentPage = pageId;
+                    // 存储当前页面的按钮配置
+                    currentButtonsConfig = page.buttons;
+                    
+                    // 更新背景
+                    const background = document.getElementById('background');
+                    if (page.bg) {
+                        console.log('设置背景:', page.bg);
+                        // 确保路径不包含重复的data/前缀
+                        const bgPath = page.bg.replace(/^data/, '');
+                        const fullBgPath = `/data/${bgPath}`;
+                        console.log('完整背景路径:', fullBgPath);
+                        background.style.backgroundImage = `url('${fullBgPath}')`;
+                        // 测试背景图片是否存在
+                        const img = new Image();
+                        img.onload = function() {
+                            console.log('背景图片加载成功');
+                        };
+                        img.onerror = function() {
+                            console.error('背景图片加载失败:', fullBgPath);
+                        };
+                        img.src = fullBgPath;
+                    } else {
+                        console.log('无背景图片');
+                        background.style.backgroundImage = 'none';
+                    }
+                    
+                    // 清空按钮容器
+                    const buttonsContainer = document.getElementById('buttons-container');
+                    buttonsContainer.innerHTML = '';
+                    
+                    // 添加按钮
+                    console.log('添加按钮:', page.buttons.length);
+                    page.buttons.forEach(button => {
+                        console.log('添加按钮:', button.id, '类型:', button.type || 'button');
+                        // 计算缩放比例
+                        const windowWidth = window.innerWidth;
+                        const windowHeight = window.innerHeight;
+                        const scaleX = windowWidth / originalWidth;
+                        const scaleY = windowHeight / originalHeight;
+                        console.log('缩放比例:', scaleX, scaleY);
+                        
+                        const buttonElement = document.createElement('div');
+                        buttonElement.className = 'button';
+                        // 添加按钮ID属性，用于后续查找
+                        buttonElement.setAttribute('data-button-id', button.id);
+                        // 根据缩放比例调整按钮位置和大小
+                        const scaledX = button.x * scaleX;
+                        const scaledY = button.y * scaleY;
+                        const scaledW = button.w * scaleX;
+                        const scaledH = button.h * scaleY;
+                        console.log('按钮原始位置:', button.x, button.y, button.w, button.h);
+                        console.log('按钮缩放后位置:', scaledX, scaledY, scaledW, scaledH);
+                        buttonElement.style.left = `${scaledX}px`;
+                        buttonElement.style.top = `${scaledY}px`;
+                        buttonElement.style.width = `${scaledW}px`;
+                        buttonElement.style.height = `${scaledH}px`;
+                        buttonElement.style.overflow = 'hidden';
+                        
+                        // 根据按钮类型添加不同内容
+                        if (button.type === 'webpage') {
+                            // 处理网页控件
+                            console.log('处理网页控件:', button.id, 'URL:', button.url);
+                            
+                            // 创建iframe
+                            const iframe = document.createElement('iframe');
+                            iframe.src = button.url || 'about:blank';
+                            iframe.style.width = '100%';
+                            iframe.style.height = '100%';
+                            iframe.style.border = 'none';
+                            iframe.style.backgroundColor = 'white';
+                            iframe.style.overflow = 'hidden';
+                            iframe.scrolling = 'no';
+                            iframe.frameBorder = '0';
+                            iframe.allow = 'fullscreen';
+                            iframe.sandbox = 'allow-same-origin allow-scripts allow-forms allow-popups allow-pointer-lock allow-network';
+                            iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts allow-forms allow-popups allow-pointer-lock allow-network');
+                            
+                            // 添加自动缩放功能
+                            iframe.onload = function() {
+                                try {
+                                    const iframeDocument = iframe.contentDocument || iframe.contentWindow.document;
+                                    const iframeBody = iframeDocument.body;
+                                    
+                                    // 设置iframe内部样式，禁止滚动
+                                    iframeDocument.documentElement.style.overflow = 'hidden';
+                                    iframeBody.style.overflow = 'hidden';
+                                    iframeBody.style.margin = '0';
+                                    iframeBody.style.padding = '0';
+                                    
+                                    // 拦截所有链接点击事件，确保在本窗口打开
+                                    const links = iframeBody.querySelectorAll('a');
+                                    links.forEach(link => {
+                                        link.addEventListener('click', function(e) {
+                                            e.preventDefault();
+                                            const href = this.getAttribute('href');
+                                            if (href) {
+                                                iframe.src = href;
+                                            }
+                                        });
+                                    });
+                                    
+                                    // 尝试自动调整大小
+                                    const resizeIframe = function() {
+                                        try {
+                                            const iframeWidth = iframe.contentWindow.innerWidth;
+                                            const iframeHeight = iframe.contentWindow.innerHeight;
+                                            const containerWidth = buttonElement.clientWidth;
+                                            const containerHeight = buttonElement.clientHeight;
+                                            
+                                            // 计算缩放比例
+                                            const scaleX = containerWidth / iframeWidth;
+                                            const scaleY = containerHeight / iframeHeight;
+                                            const scale = Math.min(scaleX, scaleY);
+                                            
+                                            // 应用缩放
+                                            iframe.style.transformOrigin = 'top left';
+                                            iframe.style.transform = `scale(${scale})`;
+                                            iframe.style.width = `${iframeWidth}px`;
+                                            iframe.style.height = `${iframeHeight}px`;
+                                            iframe.style.marginLeft = `${(containerWidth - iframeWidth * scale) / 2}px`;
+                                            iframe.style.marginTop = `${(containerHeight - iframeHeight * scale) / 2}px`;
+                                        } catch (error) {
+                                            console.error('调整iframe大小失败:', error);
+                                        }
+                                    };
+                                    
+                                    // 初始调整大小
+                                    resizeIframe();
+                                    
+                                    // 监听窗口大小变化
+                                    window.addEventListener('resize', resizeIframe);
+                                    
+                                    // 监听iframe内部大小变化
+                                    const observer = new MutationObserver(resizeIframe);
+                                    observer.observe(iframeBody, {
+                                        attributes: true,
+                                        childList: true,
+                                        subtree: true
+                                    });
+                                } catch (error) {
+                                    console.error('设置iframe属性失败:', error);
+                                }
+                            };
+                            
+                            // 添加到容器
+                            buttonElement.appendChild(iframe);
+                        } else if (button.type === 'switch') {
+                            // 处理开关控件
+                            console.log('处理开关控件:', button.id);
+                            
+                            // 添加开关图片
+                            const img = document.createElement('img');
+                            img.className = 'switch-image';
+                            // 默认显示关状态图片
+                            if (button.off_src) {
+                                console.log('设置开关关状态图片:', button.off_src);
+                                // 确保路径不包含重复的data/前缀
+                                const srcPath = button.off_src.replace(/^data/, '');
+                                img.src = `/data/${srcPath}`;
+                            }
+                            buttonElement.appendChild(img);
+                            
+                            // 添加状态指示器
+                            if (button.status_enable) {
+                                console.log('添加状态指示器');
+                                const statusIndicator = document.createElement('div');
+                                statusIndicator.className = 'status-indicator';
+                                // 添加按钮ID属性，用于后续查找
+                                statusIndicator.setAttribute('data-button-id', button.id);
+                                // 根据缩放比例调整状态指示器位置和大小
+                                const scaledStatusX = (button.x + button.status_x) * scaleX;
+                                const scaledStatusY = (button.y + button.status_y) * scaleY;
+                                const scaledStatusW = button.status_width * scaleX;
+                                const scaledStatusH = button.status_height * scaleY;
+                                console.log('状态指示器缩放后位置:', scaledStatusX, scaledStatusY, scaledStatusW, scaledStatusH);
+                                statusIndicator.style.left = `${scaledStatusX}px`;
+                                statusIndicator.style.top = `${scaledStatusY}px`;
+                                statusIndicator.style.width = `${scaledStatusW}px`;
+                                statusIndicator.style.height = `${scaledStatusH}px`;
+                                
+                                // 使用默认状态图片
+                                const statusImg = document.createElement('img');
+                                if (button.status_off_src) {
+                                    // 确保路径不包含重复的data/前缀
+                                    const statusPath = button.status_off_src.replace(/^data/, '');
+                                    statusImg.src = `/data/${statusPath}`;
+                                }
+                                statusIndicator.appendChild(statusImg);
+                                
+                                buttonsContainer.appendChild(statusIndicator);
+                            }
+                            
+                            // 添加点击事件
+                            buttonElement.addEventListener('click', () => handleButtonClick(button.id, pageId));
+                        } else if (button.type === 'aircon') {
+                            // 处理空调面板控件
+                            console.log('处理空调面板控件:', button.id);
+                            
+                            // 创建空调面板的HTML结构
+                            const airconContainer = document.createElement('div');
+                            airconContainer.className = 'aircon-panel';
+                            airconContainer.style.width = '100%';
+                            airconContainer.style.height = '100%';
+                            airconContainer.style.backgroundColor = '#ffffff';
+                            airconContainer.style.borderRadius = '20px';
+                            airconContainer.style.padding = '30px';
+                            airconContainer.style.boxSizing = 'border-box';
+                            airconContainer.style.display = 'flex';
+                            airconContainer.style.flexDirection = 'column';
+                            airconContainer.style.boxShadow = '0 4px 20px rgba(0, 0, 0, 0.1)';
+                            airconContainer.style.position = 'relative';
+                            
+                            // 顶部电源按钮
+                            const powerButton = document.createElement('button');
+                            powerButton.className = 'aircon-power-button';
+                            powerButton.style.width = '60px';
+                            powerButton.style.height = '60px';
+                            powerButton.style.borderRadius = '50%';
+                            powerButton.style.border = 'none';
+                            powerButton.style.backgroundColor = button.power === 'on' ? '#4CAF50' : '#E0E0E0';
+                            powerButton.style.color = button.power === 'on' ? 'white' : '#757575';
+                            powerButton.style.fontSize = '14px';
+                            powerButton.style.fontWeight = 'bold';
+                            powerButton.style.cursor = 'pointer';
+                            powerButton.style.position = 'absolute';
+                            powerButton.style.top = '20px';
+                            powerButton.style.right = '20px';
+                            powerButton.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.15)';
+                            powerButton.style.transition = 'all 0.3s ease';
+                            powerButton.textContent = button.power === 'on' ? '开' : '关';
+                            airconContainer.appendChild(powerButton);
+                            
+                            // 品牌标识
+                            const brandLogo = document.createElement('div');
+                            brandLogo.style.fontSize = '18px';
+                            brandLogo.style.fontWeight = 'bold';
+                            brandLogo.style.color = '#2196F3';
+                            brandLogo.style.marginBottom = '20px';
+                            brandLogo.style.textAlign = 'center';
+                            brandLogo.textContent = '智能空调';
+                            airconContainer.appendChild(brandLogo);
+                            
+                            // 温度显示
+                            const tempDisplay = document.createElement('div');
+                            tempDisplay.className = 'aircon-temp-display';
+                            tempDisplay.style.fontSize = '64px';
+                            tempDisplay.style.fontWeight = '300';
+                            tempDisplay.style.textAlign = 'center';
+                            tempDisplay.style.marginBottom = '30px';
+                            tempDisplay.style.color = '#212121';
+                            tempDisplay.style.textShadow = '0 2px 4px rgba(0, 0, 0, 0.1)';
+                            tempDisplay.textContent = `${button.temperature}°C`;
+                            airconContainer.appendChild(tempDisplay);
+                            
+                            // 模式显示
+                            const modeDisplay = document.createElement('div');
+                            modeDisplay.className = 'aircon-mode-display';
+                            modeDisplay.style.fontSize = '18px';
+                            modeDisplay.style.textAlign = 'center';
+                            modeDisplay.style.marginBottom = '40px';
+                            modeDisplay.style.color = '#757575';
+                            const modeMap = {
+                                'auto': '自动',
+                                'cool': '制冷',
+                                'heat': '制热',
+                                'fan': '送风',
+                                'dry': '除湿'
+                            };
+                            modeDisplay.textContent = modeMap[button.mode] || '自动';
+                            airconContainer.appendChild(modeDisplay);
+                            
+                            // 温度控制按钮
+                            const tempControl = document.createElement('div');
+                            tempControl.className = 'aircon-temp-control';
+                            tempControl.style.display = 'flex';
+                            tempControl.style.justifyContent = 'center';
+                            tempControl.style.marginBottom = '40px';
+                            
+                            const tempDownButton = document.createElement('button');
+                            tempDownButton.className = 'aircon-temp-button';
+                            tempDownButton.style.width = '70px';
+                            tempDownButton.style.height = '70px';
+                            tempDownButton.style.borderRadius = '50%';
+                            tempDownButton.style.border = 'none';
+                            tempDownButton.style.backgroundColor = '#F5F5F5';
+                            tempDownButton.style.color = '#2196F3';
+                            tempDownButton.style.fontSize = '32px';
+                            tempDownButton.style.fontWeight = '300';
+                            tempDownButton.style.cursor = 'pointer';
+                            tempDownButton.style.marginRight = '30px';
+                            tempDownButton.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.1)';
+                            tempDownButton.style.transition = 'all 0.3s ease';
+                            tempDownButton.textContent = '−';
+                            tempControl.appendChild(tempDownButton);
+                            
+                            const tempUpButton = document.createElement('button');
+                            tempUpButton.className = 'aircon-temp-button';
+                            tempUpButton.style.width = '70px';
+                            tempUpButton.style.height = '70px';
+                            tempUpButton.style.borderRadius = '50%';
+                            tempUpButton.style.border = 'none';
+                            tempUpButton.style.backgroundColor = '#F5F5F5';
+                            tempUpButton.style.color = '#2196F3';
+                            tempUpButton.style.fontSize = '32px';
+                            tempUpButton.style.fontWeight = '300';
+                            tempUpButton.style.cursor = 'pointer';
+                            tempUpButton.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.1)';
+                            tempUpButton.style.transition = 'all 0.3s ease';
+                            tempUpButton.textContent = '+';
+                            tempControl.appendChild(tempUpButton);
+                            
+                            airconContainer.appendChild(tempControl);
+                            
+                            // 模式和风速控制
+                            const modeFanControl = document.createElement('div');
+                            modeFanControl.className = 'aircon-mode-fan-control';
+                            modeFanControl.style.display = 'flex';
+                            modeFanControl.style.justifyContent = 'space-around';
+                            modeFanControl.style.marginBottom = '30px';
+                            
+                            // 模式控制
+                            const modeControl = document.createElement('div');
+                            modeControl.className = 'aircon-mode-control';
+                            modeControl.style.display = 'flex';
+                            modeControl.style.flexDirection = 'column';
+                            modeControl.style.alignItems = 'center';
+                            
+                            const modeLabel = document.createElement('div');
+                            modeLabel.style.fontSize = '14px';
+                            modeLabel.style.marginBottom = '10px';
+                            modeLabel.style.color = '#757575';
+                            modeLabel.textContent = '模式';
+                            modeControl.appendChild(modeLabel);
+                            
+                            const modeOptions = [
+                                { value: 'auto', text: '自动' },
+                                { value: 'cool', text: '制冷' },
+                                { value: 'heat', text: '制热' },
+                                { value: 'fan', text: '送风' },
+                                { value: 'dry', text: '除湿' }
+                            ];
+                            
+                            const modeButtons = document.createElement('div');
+                            modeButtons.style.display = 'flex';
+                            modeButtons.style.flexWrap = 'wrap';
+                            modeButtons.style.justifyContent = 'center';
+                            modeButtons.style.gap = '8px';
+                            
+                            modeOptions.forEach(option => {
+                                const modeButton = document.createElement('button');
+                                modeButton.className = 'aircon-mode-option';
+                                modeButton.style.padding = '8px 16px';
+                                modeButton.style.borderRadius = '20px';
+                                modeButton.style.border = '1px solid #E0E0E0';
+                                modeButton.style.backgroundColor = option.value === button.mode ? '#2196F3' : 'white';
+                                modeButton.style.color = option.value === button.mode ? 'white' : '#757575';
+                                modeButton.style.fontSize = '12px';
+                                modeButton.style.cursor = 'pointer';
+                                modeButton.style.transition = 'all 0.3s ease';
+                                modeButton.textContent = option.text;
+                                modeButton.value = option.value;
+                                modeButtons.appendChild(modeButton);
+                            });
+                            
+                            modeControl.appendChild(modeButtons);
+                            modeFanControl.appendChild(modeControl);
+                            
+                            // 风速控制
+                            const fanControl = document.createElement('div');
+                            fanControl.className = 'aircon-fan-control';
+                            fanControl.style.display = 'flex';
+                            fanControl.style.flexDirection = 'column';
+                            fanControl.style.alignItems = 'center';
+                            
+                            const fanLabel = document.createElement('div');
+                            fanLabel.style.fontSize = '14px';
+                            fanLabel.style.marginBottom = '10px';
+                            fanLabel.style.color = '#757575';
+                            fanLabel.textContent = '风速';
+                            fanControl.appendChild(fanLabel);
+                            
+                            const fanOptions = [
+                                { value: 'low', text: '低' },
+                                { value: 'medium', text: '中' },
+                                { value: 'high', text: '高' },
+                                { value: 'auto', text: '自动' }
+                            ];
+                            
+                            const fanButtons = document.createElement('div');
+                            fanButtons.style.display = 'flex';
+                            fanButtons.style.gap = '8px';
+                            
+                            fanOptions.forEach(option => {
+                                const fanButton = document.createElement('button');
+                                fanButton.className = 'aircon-fan-option';
+                                fanButton.style.padding = '8px 16px';
+                                fanButton.style.borderRadius = '20px';
+                                fanButton.style.border = '1px solid #E0E0E0';
+                                fanButton.style.backgroundColor = option.value === button.fan_speed ? '#4CAF50' : 'white';
+                                fanButton.style.color = option.value === button.fan_speed ? 'white' : '#757575';
+                                fanButton.style.fontSize = '12px';
+                                fanButton.style.cursor = 'pointer';
+                                fanButton.style.transition = 'all 0.3s ease';
+                                fanButton.textContent = option.text;
+                                fanButton.value = option.value;
+                                fanButtons.appendChild(fanButton);
+                            });
+                            
+                            fanControl.appendChild(fanButtons);
+                            modeFanControl.appendChild(fanControl);
+                            
+                            airconContainer.appendChild(modeFanControl);
+                            
+                            // 底部状态信息
+                            const statusInfo = document.createElement('div');
+                            statusInfo.style.fontSize = '12px';
+                            statusInfo.style.color = '#9E9E9E';
+                            statusInfo.style.textAlign = 'center';
+                            statusInfo.style.marginTop = 'auto';
+                            statusInfo.textContent = '智能模式 | 节能运行';
+                            airconContainer.appendChild(statusInfo);
+                            
+                            // 添加到容器
+                            buttonElement.appendChild(airconContainer);
+                            
+                            // 添加事件监听器
+                            powerButton.addEventListener('click', () => {
+                                console.log('空调电源按钮点击');
+                                // 这里可以添加电源控制逻辑
+                            });
+                            
+                            tempDownButton.addEventListener('click', () => {
+                                console.log('温度减按钮点击');
+                                // 这里可以添加温度减逻辑
+                            });
+                            
+                            tempUpButton.addEventListener('click', () => {
+                                console.log('温度加按钮点击');
+                                // 这里可以添加温度加逻辑
+                            });
+                            
+                            // 模式按钮事件
+                            const modeButtonElements = modeButtons.querySelectorAll('.aircon-mode-option');
+                            modeButtonElements.forEach(button => {
+                                button.addEventListener('click', () => {
+                                    console.log('模式选择改变:', button.value);
+                                    // 这里可以添加模式改变逻辑
+                                });
+                            });
+                            
+                            // 风速按钮事件
+                            const fanButtonElements = fanButtons.querySelectorAll('.aircon-fan-option');
+                            fanButtonElements.forEach(button => {
+                                button.addEventListener('click', () => {
+                                    console.log('风速选择改变:', button.value);
+                                    // 这里可以添加风速改变逻辑
+                                });
+                            });
+                        } else {
+                            // 处理普通按钮
+                            // 添加按钮图片
+                            const img = document.createElement('img');
+                            if (button.src) {
+                                console.log('设置按钮图片:', button.src);
+                                // 确保路径不包含重复的data/前缀
+                                const srcPath = button.src.replace(/^data/, '');
+                                img.src = `/data/${srcPath}`;
+                            }
+                            buttonElement.appendChild(img);
+                            
+                            // 添加状态指示器
+                            if (button.status_enable) {
+                                console.log('添加状态指示器');
+                                const statusIndicator = document.createElement('div');
+                                statusIndicator.className = 'status-indicator';
+                                // 添加按钮ID属性，用于后续查找
+                                statusIndicator.setAttribute('data-button-id', button.id);
+                                // 根据缩放比例调整状态指示器位置和大小
+                                const scaledStatusX = (button.x + button.status_x) * scaleX;
+                                const scaledStatusY = (button.y + button.status_y) * scaleY;
+                                const scaledStatusW = button.status_width * scaleX;
+                                const scaledStatusH = button.status_height * scaleY;
+                                console.log('状态指示器缩放后位置:', scaledStatusX, scaledStatusY, scaledStatusW, scaledStatusH);
+                                statusIndicator.style.left = `${scaledStatusX}px`;
+                                statusIndicator.style.top = `${scaledStatusY}px`;
+                                statusIndicator.style.width = `${scaledStatusW}px`;
+                                statusIndicator.style.height = `${scaledStatusH}px`;
+                                
+                                // 使用默认状态图片
+                                const statusImg = document.createElement('img');
+                                if (button.status_off_src) {
+                                    // 确保路径不包含重复的data/前缀
+                                    const statusPath = button.status_off_src.replace(/^data/, '');
+                                    statusImg.src = `/data/${statusPath}`;
+                                }
+                                statusIndicator.appendChild(statusImg);
+                                
+                                buttonsContainer.appendChild(statusIndicator);
+                            }
+                            
+                            // 添加点击事件
+                            buttonElement.addEventListener('click', () => handleButtonClick(button.id, pageId));
+                        }
+                        
+                        buttonsContainer.appendChild(buttonElement);
+                    });
+                } else {
+                    console.error('加载页面失败:', data.message);
+                }
+            } catch (error) {
+                console.error('加载页面失败:', error);
+            }
+        }
+        
+        // 处理按钮点击
+        async function handleButtonClick(buttonId, pageId) {
+            try {
+                console.log('按钮点击:', buttonId, '页面:', pageId);
+                
+                // 显示等待图片
+                showWaitImage();
+                
+                const response = await fetch('/api/button/click', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ button_id: buttonId, page_id: pageId })
+                });
+                
+                const data = await response.json();
+                console.log('按钮点击响应:', data);
+                
+                // 隐藏等待图片
+                hideWaitImage();
+                
+                if (data.success && data.switch_page) {
+                    // 页面跳转
+                    loadPage(data.switch_page);
+                } else if (data.success && data.switch_state !== undefined) {
+                    // 更新开关状态图片和状态指示器
+                    console.log('更新开关状态:', buttonId, '状态:', data.switch_state);
+                    updateSwitchImage(buttonId, data.switch_state);
+                    updateStatusIndicator(buttonId, data.switch_state);
+                }
+            } catch (error) {
+                console.error('处理按钮点击失败:', error);
+                // 隐藏等待图片
+                hideWaitImage();
+            }
+        }
+        
+        // 更新开关图片
+        function updateSwitchImage(buttonId, state) {
+            try {
+                // 查找开关控件的容器
+                const buttonsContainer = document.getElementById('buttons-container');
+                const buttonElements = buttonsContainer.querySelectorAll('.button');
+                
+                buttonElements.forEach(element => {
+                    // 查找开关图片
+                    const img = element.querySelector('.switch-image');
+                    if (img) {
+                        // 获取按钮数据（这里需要确保按钮容器有按钮ID信息）
+                        // 由于我们没有直接存储按钮ID，我们需要通过其他方式找到对应的按钮
+                        // 这里我们假设每个按钮容器都有一个data-button-id属性
+                        const containerButtonId = element.getAttribute('data-button-id');
+                        if (containerButtonId === buttonId) {
+                            // 查找对应的按钮配置
+                            const buttonConfig = findButtonConfig(buttonId);
+                            if (buttonConfig) {
+                                // 根据状态更新图片
+                                const src = state === 'on' ? buttonConfig.on_src : buttonConfig.off_src;
+                                if (src) {
+                                    console.log('更新开关图片:', buttonId, '状态:', state, '图片:', src);
+                                    // 确保路径不包含重复的data/前缀
+                                    const srcPath = src.replace(/^data/, '');
+                                    img.src = `/data/${srcPath}`;
+                                }
+                            }
+                        }
+                    }
+                });
+            } catch (error) {
+                console.error('更新开关图片失败:', error);
+            }
+        }
+        
+        // 更新状态指示器
+        function updateStatusIndicator(buttonId, state) {
+            try {
+                // 查找状态指示器
+                const buttonsContainer = document.getElementById('buttons-container');
+                const statusIndicators = buttonsContainer.querySelectorAll('.status-indicator');
+                
+                // 查找对应的按钮配置
+                const buttonConfig = findButtonConfig(buttonId);
+                if (!buttonConfig) return;
+                
+                // 更新状态指示器
+                statusIndicators.forEach(indicator => {
+                    // 查找与当前按钮ID匹配的状态指示器
+                    const indicatorButtonId = indicator.getAttribute('data-button-id');
+                    if (indicatorButtonId === buttonId) {
+                        const statusImg = indicator.querySelector('img');
+                        if (statusImg) {
+                            // 根据状态更新图片
+                            // 首先尝试使用按钮特定的状态图片
+                            let statusSrc = '';
+                            if (state === 'on') {
+                                statusSrc = buttonConfig.status_on_src || '';
+                            } else {
+                                statusSrc = buttonConfig.status_off_src || '';
+                            }
+                            
+                            if (statusSrc) {
+                                console.log('更新状态指示器:', buttonId, '状态:', state, '图片:', statusSrc);
+                                // 确保路径不包含重复的data/前缀
+                                const statusPath = statusSrc.replace(/^data/, '');
+                                statusImg.src = `/data/${statusPath}`;
+                            }
+                        }
+                    }
+                });
+            } catch (error) {
+                console.error('更新状态指示器失败:', error);
+            }
+        }
+        
+        // 查找按钮配置
+        function findButtonConfig(buttonId) {
+            // 从当前页面的按钮配置中查找
+            for (const button of currentButtonsConfig) {
+                if (button.id === buttonId) {
+                    return button;
+                }
+            }
+            return null;
+        }
+        
+        // 处理页面缩放
+        function handleResize() {
+            console.log('处理页面缩放');
+            const container = document.getElementById('container');
+            const windowWidth = window.innerWidth;
+            const windowHeight = window.innerHeight;
+            console.log('窗口大小:', windowWidth, 'x', windowHeight);
+            
+            // 设置容器大小为窗口大小，不考虑比例
+            container.style.width = `${windowWidth}px`;
+            container.style.height = `${windowHeight}px`;
+            
+            // 更新等待图片位置和大小
+            updateWaitImage();
+            
+            // 重新加载页面，确保按钮位置正确
+            // 这样可以确保按钮位置和大小会根据新的窗口大小重新计算
+            loadPage(currentPage);
+        }
+        
+        // 检查许可证状态
+        async function checkLicenseStatus() {
+            try {
+                const response = await fetch('/api/license/status');
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log('许可证状态:', data);
+                    if (!data.valid) {
+                        console.log('许可证无效，显示注册窗口');
+                        // 在未授权状态下，自动弹出注册窗口
+                        openLicenseDialog();
+                    }
+                }
+            } catch (error) {
+                console.error('检查许可证状态失败:', error);
+            }
+        }
+        
+        // 打开注册窗口
+        async function openLicenseDialog() {
+            try {
+                // 获取机器ID
+                const response = await fetch('/api/license/machine-id');
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.success) {
+                        document.getElementById('machine-id').value = data.machine_id;
+                        document.getElementById('license-key').value = '';
+                        document.getElementById('license-message').textContent = '';
+                        document.getElementById('license-dialog').style.display = 'block';
+                        document.getElementById('overlay').style.display = 'block';
+                    }
+                }
+            } catch (error) {
+                console.error('获取机器ID失败:', error);
+            }
+        }
+        
+        // 关闭注册窗口
+        function closeLicenseDialog() {
+            document.getElementById('license-dialog').style.display = 'none';
+            document.getElementById('overlay').style.display = 'none';
+            // 20秒后再次弹出注册窗口
+            setTimeout(() => {
+                // 再次检查许可证状态，如果仍然未授权，则显示注册窗口
+                checkLicenseStatus();
+            }, 10000);
+        }
+        
+        // 验证注册码
+        async function validateLicense() {
+            try {
+                const licenseKey = document.getElementById('license-key').value;
+                if (!licenseKey) {
+                    document.getElementById('license-message').textContent = '请输入注册码';
+                    document.getElementById('license-message').style.color = 'red';
+                    return;
+                }
+                
+                const response = await fetch('/api/license/validate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ license_key: licenseKey })
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.success) {
+                        document.getElementById('license-message').textContent = data.message;
+                        document.getElementById('license-message').style.color = 'green';
+                        // 3秒后关闭窗口
+                        setTimeout(closeLicenseDialog, 3000);
+                    } else {
+                        document.getElementById('license-message').textContent = data.message;
+                        document.getElementById('license-message').style.color = 'red';
+                    }
+                }
+            } catch (error) {
+                console.error('验证注册码失败:', error);
+                document.getElementById('license-message').textContent = '验证失败，请重试';
+                document.getElementById('license-message').style.color = 'red';
+            }
+        }
+        
+        // 定期更新按钮状态
+        async function updateButtonStatus() {
+            try {
+                const response = await fetch('/api/button/status');
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.success) {
+                        const states = data.states;
+                        // 更新开关状态和状态指示器
+                        for (const buttonId in states) {
+                            updateSwitchImage(buttonId, states[buttonId]);
+                            updateStatusIndicator(buttonId, states[buttonId]);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('更新按钮状态失败:', error);
+            }
+        }
+        
+        // 初始化
+        console.log('调用init()');
+        init();
+        
+        // 每5秒更新一次按钮状态
+        setInterval(updateButtonStatus, 5000);
+        // 初始调用一次
+        updateButtonStatus();
+        
+        // 监听窗口大小变化
+        window.addEventListener('resize', handleResize);
+        // 初始调用一次
+        handleResize();
+        
+        // 键盘回车事件监听
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                // 打开注册窗口
+                openLicenseDialog();
+            }
+        });
+        
+        // 绑定按钮事件
+        document.addEventListener('DOMContentLoaded', function() {
+            const validateBtn = document.getElementById('validate-license');
+            const closeBtn = document.getElementById('close-license');
+            
+            if (validateBtn) {
+                validateBtn.addEventListener('click', validateLicense);
+            }
+            
+            if (closeBtn) {
+                closeBtn.addEventListener('click', closeLicenseDialog);
+            }
+        });
+    </script>
+</body>
+</html>
+    
