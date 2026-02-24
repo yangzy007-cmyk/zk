@@ -42,17 +42,15 @@ jobs:
       run: |
         pip install buildozer cython setuptools
     
-    - name: Cache python-for-android
-      uses: actions/cache@v4
-      with:
-        path: ~/.buildozer
-        key: ${{ runner.os }}-buildozer-${{ hashFiles('buildozer.spec') }}
-        restore-keys: |
-          ${{ runner.os }}-buildozer-
-    
-    - name: Build APK
+    - name: Clean and Build APK
       run: |
-        buildozer android debug
+        # 清理之前的构建
+        buildozer android clean || true
+        rm -rf ~/.buildozer/android/platform/android-sdk
+        
+        # 构建
+        export BUILDOZER_WARN_ON_ROOT=0
+        buildozer -v android debug
       timeout-minutes: 120
     
     - name: Upload APK
